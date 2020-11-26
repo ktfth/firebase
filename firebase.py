@@ -18,7 +18,7 @@ def args():
     parser.add_argument('--dnsdumpster', action='store_true', required=False, default=False, help='Use the DNSDumpster API to gather DBs')
     parser.add_argument('--just-v', action='store_true', required=False, default=False, help='Ignore non-vulnerable DBs')
     parser.add_argument('--amass', dest='amass', required=False, default=False, help='Path to the output file of an amass scan ([-o] argument)')
-    
+
     if len(sys.argv) == 1:
         parser.error("No arguments supplied.")
         sys.exit()
@@ -47,25 +47,24 @@ def worker(url):
     sleep(0.5) #a bit of delay to not abuse in excess the servers
     try:
         r = requests.get(url).json()
+        try:
+            if 'error' in r.keys():
+                if r['error'] == 'Permission denied' and not args_.just_v:
+                    return {'status':-2, 'url':url} #successfully protected
+                elif r['error'] == '404 Not Found' and not args_.just_v:
+                    return {'status':-1, 'url':url} #doesn't exist
+                elif not args_.just_v:
+                    return {'status':0, 'url':url} #maybe there's a chance for further explotiation
+            else:
+                return {'status':1, 'url':url, 'data':r} #vulnerable
+        except AttributeError:
+            '''
+            Some DBs may just return null
+            '''
+            if not args_.just_v:
+                return {'status':0, 'url':url}
     except requests.exceptions.RequestException as e:
         print(e)
-    
-    try:
-        if 'error' in r.keys():
-            if r['error'] == 'Permission denied' and not args_.just_v:
-                return {'status':-2, 'url':url} #successfully protected
-            elif r['error'] == '404 Not Found' and not args_.just_v:
-                return {'status':-1, 'url':url} #doesn't exist
-            elif not args_.just_v:
-                return {'status':0, 'url':url} #maybe there's a chance for further explotiation
-        else:
-            return {'status':1, 'url':url, 'data':r} #vulnerable
-    except AttributeError:
-        '''
-        Some DBs may just return null
-        '''
-        if not args_.just_v:
-            return {'status':0, 'url':url}
 
 
 def load_file():
@@ -78,10 +77,10 @@ def load_file():
         with open(args_.path, 'r') as f:
             print('Gathering subdomains through the downloaded file...')
             s = BeautifulSoup(f.read(), 'html.parser')
-        
+
         table = s.find('div', class_='col-xs-12').find('table')
         return [row.find('a')['href'] for row in table.find('tbody').find_all('tr')[:-1]]
-    
+
     except IOError as e:
         raise e
 
@@ -94,7 +93,7 @@ def down_tops():
     '''
     from subprocess import Popen
     command = "wget -q http://s3.amazonaws.com/alexa-static/top-1m.csv.zip;unzip top-1m.csv.zip; awk -F ',' '{print $2}' top-1m.csv|head -"+str(args_.crawl_top)+" > top-"+str(args_.crawl_top)+".txt; rm top-1m.csv*"
-    
+
     try:
         Popen(command, shell=True).wait()
     except Exception:
@@ -114,7 +113,7 @@ def tops():
     print('Retrieving {} top domains'.format(args_.crawl_top))
     with open(fn, 'r') as f:
         [top_doms.add(line.split('.')[0]) for line in f]
-    
+
     top_doms = ['https://{}.firebaseio.com/.json'.format(dom) for dom in top_doms]
     return top_doms
 
@@ -125,7 +124,7 @@ def amass():
     '''
     with open(args_.amass) as f:
         dbs = ['https://{}/.json'.format(line.rstrip()) for line in f]
-    
+
     return dbs
 
 
@@ -134,9 +133,9 @@ def dns_dumpster():
 
     print('Gathering subdomains using DNSDumpster...')
     results = DNSDumpsterAPI().search('firebaseio.com')
-    
+
     return [domain['domain'] for domain in results['dns_records']['host']]
-        
+
 
 if __name__ == '__main__':
     args_ = args()
@@ -155,7 +154,7 @@ if __name__ == '__main__':
 
         if args_.amass:
             urls.extend(amass())
-        
+
         print('\nLooting...')
         p = Pool(args_.process)
         loot = [result for result in list(p.map(worker, urls)) if result != None]
@@ -164,7 +163,7 @@ if __name__ == '__main__':
         urls = set()
         with open(args_.list, 'r') as f:
             [urls.add('https://{}.firebaseio.com/.json'.format(line.rstrip())) for line in f]
-        
+
         p = Pool(args_.process)
         loot = [result for result in list(p.map(worker, urls)) if result != None]
 
